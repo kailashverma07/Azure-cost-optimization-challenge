@@ -27,6 +27,9 @@ This setup ensures:
 
 ---
 
+![Architecture Diagram](./bc59b64c-03d0-4f9d-8b29-c8cef0da43fe.png)
+
+
 
 ```mermaid
 graph TD

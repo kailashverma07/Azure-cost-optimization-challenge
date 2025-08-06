@@ -1,0 +1,124 @@
+# 📊 Azure Cost Optimization Challenge
+
+## Managing Billing Records in Azure Serverless Architecture
+
+### 🎯 Scenario Summary
+
+We store billing records in **Azure Cosmos DB** within a serverless system. The database contains over 2 million records, each up to 300 KB in size. Most of the system's workload involves **reading data**, and **records older than 3 months are rarely accessed**. However, these old records still contribute significantly to the **cost** due to Cosmos DB's RU/s and storage pricing.
+
+The challenge is to **reduce cost** without changing the existing APIs, causing downtime, or losing any data.
+
+---
+
+## ✅ Solution Overview: Tiered Storage Design
+
+We propose a **tiered storage architecture**:
+
+* **Hot data (last 3 months)** → Stay in Cosmos DB
+* **Cold data (older than 3 months)** → Archived to Azure Blob Storage
+* **Fallback logic** → Built into the read path of the API to fetch cold data if not found in Cosmos DB
+
+This setup ensures:
+
+* No API changes
+* No data loss
+* No downtime
+* Efficient cost reduction
+
+---
+
+## 🏗️ Architecture Diagram (Mermaid Format)
+
+```mermaid
+graph TD
+  A[Client Apps] --> B[API Layer (No Change)]
+  B --> C[Cosmos DB (Hot Data)]
+  C -->|Older than 90 days| D[Blob Storage (Cold Archive)]
+```
+
+---
+
+## 🔄 Archival Logic (Automated with Azure Function)
+
+A timer-based **Azure Function** runs daily or weekly to move cold data from Cosmos DB to Blob Storage.
+
+### 💪 Pseudocode
+
+```python
+from datetime import datetime, timedelta
+from azure.cosmos import CosmosClient
+from azure.storage.blob import BlobServiceClient
+import json
+
+def archive_old_data():
+    cutoff = datetime.utcnow() - timedelta(days=90)
+    client = CosmosClient(COSMOS_URI, COSMOS_KEY)
+    container = client.get_database_client(DB).get_container_client(CONTAINER)
+
+    query = f"SELECT * FROM c WHERE c.timestamp < '{cutoff.isoformat()}'"
+    old_records = list(container.query_items(query, enable_cross_partition_query=True))
+
+    if not old_records:
+        return
+
+    blob = BlobServiceClient(account_url=BLOB_URL, credential=BLOB_KEY)
+    archive_blob = blob.get_blob_client(container=ARCHIVE_CONTAINER,
+                    blob=f"archive_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.json")
+
+    archive_blob.upload_blob(json.dumps(old_records), overwrite=True)
+
+    for item in old_records:
+        container.delete_item(item['id'], partition_key=item['partitionKey'])
+```
+
+---
+
+## 🔁 Read Fallback Logic
+
+No changes are made to the API. The internal logic checks Cosmos DB first, and if the record is not found, it looks into Blob Storage.
+
+### 💪 Pseudocode
+
+```python
+def get_billing_record(record_id):
+    try:
+        return cosmos_container.read_item(record_id, partition_key)
+    except:
+        for blob_client in list_blob_clients():
+            records = json.loads(blob_client.download_blob().readall())
+            for rec in records:
+                if rec['id'] == record_id:
+                    return rec
+        raise Exception("Record not found")
+```
+
+---
+
+## 💰 Cost Optimization Benefits
+
+| Component      | Purpose                        | Benefit                      |
+| -------------- | ------------------------------ | ---------------------------- |
+| Cosmos DB      | Recent data (< 3 months)       | Faster reads, reduced size   |
+| Blob Storage   | Archived data (> 3 months)     | Much cheaper, tiered storage |
+| Azure Function | Serverless archival automation | Low maintenance, scalable    |
+
+---
+
+## 🔐 Operational Best Practices
+
+* Use **Managed Identity** for secure inter-service communication
+* Add **retry logic** to ensure function reliability
+* Enable **Blob Storage lifecycle rules** to move data to cooler tiers
+* Monitor with **Azure Monitor** and set alerts on storage and function activity
+
+---
+
+## 🚀 Final Summary
+
+This solution:
+
+* Keeps APIs untouched ✅
+* Ensures no downtime or data loss ✅
+* Delivers seamless access to both hot and cold data ✅
+* Reduces long-term storage and RU/s costs ✅
+* Is easy to implement, automate, and maintain ✅
